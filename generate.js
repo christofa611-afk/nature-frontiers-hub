@@ -1,98 +1,128 @@
 import fs from 'fs';
 import axios from 'axios';
 import { parseStringPromise } from 'xml2js';
-// --- YOUR YOUTUBE SOURCES ---
-const VIDEO_FEEDS = [
-  'https://www.youtube.com/feeds/videos.xml?channel_id=UC41xXhw22o6Q2I2pTKB2kOg',
-  'https://www.youtube.com/feeds/videos.xml?user=@naturefrontiers-life',
-  // Specific Playlists
-  'https://www.youtube.com/feeds/videos.xml?playlist_id=PLhErNUuDxs_2F8ayJ_XDrgCbH-CiAqRcd',
-  'https://www.youtube.com/feeds/videos.xml?playlist_id=PLhErNUuDxs_04gGj-HoaSkXNQ1bno89I8',
-  'https://www.youtube.com/feeds/videos.xml?playlist_id=PLhErNUuDxs_0OFY1a8itinxcWutV7oN78',
-  'https://www.youtube.com/feeds/videos.xml?playlist_id=PLhErNUuDxs_3s5P3kfBg1wZdWJY_PmAfC'
-];
-// --- LEGITIMATE NEWS SOURCES (We pull their headlines to attract traffic) ---
-const NEWS_FEEDS = [
-  'https://www.nationalgeographic.com/animals/rss',
-  'https://www.bbcearth.com/feed/',
-  'https://www.worldwildlife.org/feeds/news',
-  'https://africageographic.com/feed/',
-  'https://www.krugerpark.co.za/feed/',
-  'https://www.audubon.org/rss',
-  'https://www.earthtouchnews.com/feed/',
-  'https://www.treehugger.com/animals-wildlife-4127792/feed',
-  'https://www.oceana.org/feed/',
-  'https://www.smithsonianmag.com/rss/animals/',
-  'https://www.sciencedaily.com/rss/plants_animals.xml',
-  'https://phys.org/rss-feed/biology-news/plants-animals/',
-  'https://news.mongabay.com/feed/',
-  'https://africafreak.com/feed',
-  'https://www.africanconservation.org/feed',
-  'https://latestsightings.com/feed/',
-  'https://wildambience.com/feed/',
-  'https://www.janegoodall.org/feed/',
-  'https://blog.wcs.org/feed/'
-  // Added top sources to keep load times fast. Adding all 40+ may cause timeouts.
-];
-async function fetchXML(url) {
-  try {
-    const { data } = await axios.get(url, { timeout: 5000 });
-    const result = await parseStringPromise(data);
-    // Handle different RSS/Atom formats
-    if (result.feed) return result.feed.entry || [];
-    if (result.rss && result.rss.channel) return result.rss.channel[0].item || [];
-    return [];
-  } catch (e) {
-    console.log(`⚠️ Failed to fetch ${url}`);
-    return [];
+import config from './src/config.js';
+async function fetchYouTubeVideos() {
+  console.log('📺 Fetching YouTube Videos & Playlists...');
+  let videos = [];
+  const apiKey = config.YOUTUBE_API_KEY;
+  if (!apiKey) {
+    console.warn('⚠️ No YouTube API Key found. Skipping API fetch. Using RSS fallback if available.');
+    // Fallback to RSS if no key (limited to recent uploads only)
+    return fetchYouTubeRSS(); 
   }
+  // 1. Fetch Channel Uploads
+  try {
+    const uploadsUrl = `https://www.googleapis.com/youtube/v3/search?key=${apiKey}&channelId=${config.YOUTUBE_CHANNEL_ID}&part=snippet,id&order=date&maxResults=10`;
+    const res = await axios.get(uploadsUrl);
+    videos.push(...res.data.items.map(item => ({
+      type: 'video',
+      id: item.id.videoId,
+      title: item.snippet.title,
+      link: `https://www.youtube.com/watch?v=${item.id.videoId}`,
+      image: item.snippet.thumbnails.high?.url || item.snippet.thumbnails.default?.url,
+      date: new Date(item.snippet.publishedAt).toLocaleDateString(),
+      category: categorizeContent(item.snippet.title + " " + item.snippet.description)
+    })));
+  } catch (e) {
+    console.error("Error fetching channel uploads:", e.message);
+  }
+  // 2. Fetch Playlists
+  for (const playlistId of config.PLAYLISTS) {
+    try {
+      const plUrl = `https://www.googleapis.com/youtube/v3/playlistItems?key=${apiKey}&playlistId=${playlistId}&part=snippet&maxResults=10`;
+      const res = await axios.get(plUrl);
+      videos.push(...res.data.items.map(item => ({
+        type: 'video',
+        id: item.snippet.resourceId?.videoId,
+        title: item.snippet.title,
+        link: `https://www.youtube.com/watch?v=${item.snippet.resourceId?.videoId}`,
+        image: item.snippet.thumbnails.high?.url || item.snippet.thumbnails.default?.url,
+        date: new Date(item.snippet.publishedAt).toLocaleDateString(),
+        category: categorizeContent(item.snippet.title + " " + item.snippet.description)
+      })));
+    } catch (e) {
+      console.error(`Error fetching playlist ${playlistId}:`, e.message);
+    }
+  }
+  // Remove duplicates based on ID
+  return Array.from(new Map(videos.map(v => [v.id, v])).values());
+}
+// Fallback if API key is missing
+async function fetchYouTubeRSS() {
+  let videos = [];
+  const urls = [
+    `https://www.youtube.com/feeds/videos.xml?channel_id=${config.YOUTUBE_CHANNEL_ID}`,
+    ...config.PLAYLISTS.map(id => `https://www.youtube.com/feeds/videos.xml?playlist_id=${id}`)
+  ];
+  for (const url of urls) {
+    try {
+      const { data } = await axios.get(url);
+      const result = await parseStringPromise(data);
+      const entries = result.feed?.entry || [];
+      entries.forEach(entry => {
+        const id = entry.id[0].split(':').pop();
+        videos.push({
+          type: 'video',
+          id: id,
+          title: entry.title[0],
+          link: entry.link[0].$.href,
+          image: `https://img.youtube.com/vi/${id}/mqdefault.jpg`,
+          date: new Date(entry.published[0]).toLocaleDateString(),
+          category: categorizeContent(entry.title[0])
+        });
+      });
+    } catch (e) {
+      console.log(`RSS Fetch failed for ${url}`);
+    }
+  }
+  return videos;
+}
+async function fetchNewsFeeds() {
+  console.log('📰 Fetching News Feeds...');
+  let news = [];
+  
+  for (const feed of config.RSS_FEEDS) {
+    try {
+      const { data } = await axios.get(feed.url, { timeout: 3000 });
+      const result = await parseStringPromise(data);
+      const items = result.feed ? (result.feed.entry || []) : (result.rss?.channel?.[0]?.item || []);
+            items.slice(0, 2).forEach(item => {
+        news.push({
+          type: 'news',
+          id: Math.random().toString(36),
+          title: item.title ? item.title[0] : 'Nature News',
+          link: item.link ? (item.link[0]?.$?.href || item.link[0]) : '#',
+          image: 'https://images.pexels.com/photos/3225521/pexels-photo-3225521.jpeg?auto=compress&cs=tinysrgb&w=600',
+          date: 'Latest',
+          source: feed.name,
+          category: categorizeContent(item.title ? item.title[0] : '')
+        });
+      });
+    } catch (e) {
+      // Silent fail for slow feeds
+    }
+  }
+  return news;
+}
+function categorizeContent(text) {
+  const lowerText = text.toLowerCase();
+  for (const cat of config.CATEGORIES) {
+    if (cat.id === 'all') continue;
+    if (cat.keywords.some(k => lowerText.includes(k))) return cat.id;
+  }
+  return 'all';
 }
 async function main() {
-  console.log('🌿 Starting Nature Frontiers Hub Generator...');
-  let content = [];
-    // 1. Fetch Your Videos
-  console.log('📹 Fetching your YouTube videos...');
-  for (const url of VIDEO_FEEDS) {
-    const entries = await fetchXML(url);
-    entries.forEach(entry => {
-      const id = entry.id ? entry.id[0].split(':').pop() : Math.random().toString(36);
-      const link = entry.link ? (entry.link[0].$.href || entry.link[0]) : '#';
-            content.push({
-        type: 'video',
-        source: 'Nature Frontiers',
-        id: id,
-        title: entry.title ? entry.title[0] : 'New Wildlife Video',
-        link: link,
-        image: `https://img.youtube.com/vi/${id}/maxresdefault.jpg`,
-        date: new Date(entry.published ? entry.published[0] : Date.now()).toLocaleDateString(),
-        timestamp: new Date(entry.published ? entry.published[0] : Date.now()).getTime()
-      });
-    });
-  }
-  // 2. Fetch Global News (To attract visitors)
-  console.log('📰 Fetching global nature news...');
-  for (const url of NEWS_FEEDS) {
-    const items = await fetchXML(url);
-    items.slice(0, 2).forEach(item => { // Get top 2 from each source to prevent overload
-      content.push({
-        type: 'news',
-        source: 'Global News',
-        id: Math.random().toString(36),
-        title: item.title ? item.title[0] : 'Nature News Update',
-        link: item.link ? (item.link[0] || item.link) : '#',
-        image: 'https://images.pexels.com/photos/3225521/pexels-photo-3225521.jpeg?auto=compress&cs=tinysrgb&w=600',
-        date: 'Latest',
-        timestamp: Date.now()
-      });
-    });
-  }
-  // 3. Sort: Newest first
-  content.sort((a, b) => b.timestamp - a.timestamp);
-  // Remove duplicates based on ID
-  const uniqueContent = Array.from(new Map(content.map(item => [item.id, item])).values());
-  // 4. Save to public folder
+  const videos = await fetchYouTubeVideos();
+  const news = await fetchNewsFeeds();
+    // Combine and sort (videos first, then news)
+  const allContent = [...videos, ...news].sort((a, b) => {
+    if (a.type === b.type) return 0;
+    return a.type === 'video' ? -1 : 1;
+  });
   if (!fs.existsSync('public/data')) fs.mkdirSync('public/data', { recursive: true });
-  fs.writeFileSync('public/data/content.json', JSON.stringify(uniqueContent, null, 2));
-console.log(`✅ SUCCESS! Generated ${uniqueContent.length} items (${content.filter(i=>i.type==='video').length} videos, ${content.filter(i=>i.type==='news').length} news items).`);
+  fs.writeFileSync('public/data/content.json', JSON.stringify(allContent));
+  console.log(`✅ Generated ${allContent.length} items (Videos: ${videos.length}, News: ${news.length})`);
 }
 main().catch(console.error);
