@@ -1,4 +1,4 @@
 name: Generate Content & Build
         run: npm run build
         env:
-          VITE_YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_AIzaSyBfCUghZRKKJbDFVTGRFXdjkxoVAVa8gIE }}
+          VITE_YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
