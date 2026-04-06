@@ -1,52 +1,40 @@
 name: Build and Deploy Nature Hub
-
 on:
   push:
     branches: [ "main" ]
   workflow_dispatch:
   schedule:
     - cron: '0 0 */2 * *'
-
 permissions:
   contents: read
   pages: write
   id-token: write
-
 concurrency:
   group: "pages"
   cancel-in-progress: false
-
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: Checkout Repository
         uses: actions/checkout@v4
-      
-      - name: Setup Node
+            - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          # We do NOT use cache here to avoid conflicts with missing lock files
-      
-      - name: Install Dependencies & Generate Lock File
-        # This command installs packages AND creates the missing package-lock.json automatically
-        run: npm install --package-lock-only
-      
-      - name: Install Full Dependencies
-        run: npm ci
-      
+            # FIX 1: Use 'npm install' instead of 'npm ci' to handle auto-generated lock files
+      - name: Install Dependencies
+        run: npm install      
       - name: Generate Content & Build
         run: npm run build
-      
-      - name: Setup Pages
+        env:
+          CI: true
+            - name: Setup Pages
         uses: actions/configure-pages@v4
-      
-      - name: Upload Artifact
+            - name: Upload Artifact
         uses: actions/upload-pages-artifact@v3
         with:
           path: './dist'
-
   deploy:
     environment:
       name: github-pages
