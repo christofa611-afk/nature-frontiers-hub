@@ -1,48 +1,6 @@
-name: Build and Deploy Nature Hub
-on:
-  push:
-    branches: ["main"]
-  workflow_dispatch:
-  schedule:
-    - cron: '0 0 */2 * *' # Every 48 hours
-permissions:
-  contents: read
-  pages: write
-  id-token: write
-concurrency:
-  group: "pages-${{ github.ref }}"
-  cancel-in-progress: false
-jobs:
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'npm'
-      - name: Install Dependencies (Generates lock file if missing)
-        # We use 'npm install' instead of 'npm ci' to auto-generate package-lock.json if missing
-        run: npm install
-      - name: Generate Content Data
+# ... (previous steps same)
+      - name: Generate Content & Build
         run: npm run build
         env:
-          CI: true
-      - name: Setup Pages
-        uses: actions/configure-pages@v5
-      - name: Upload Artifact
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: './dist'
-  deploy:
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    runs-on: ubuntu-latest
-    needs: build
-    steps:
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
+          YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
+# ... (rest of file same)
